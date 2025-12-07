@@ -1,3 +1,9 @@
+"""
+Restaurant grade prediction module.
+
+Handles model loading, feature encoding, and predictions.
+"""
+
 import json
 import joblib
 import numpy as np
@@ -5,85 +11,239 @@ import pandas as pd
 import os
 
 # -------------------------------------------------
-# Load model + metadata once (cached)
+# Configuration
 # -------------------------------------------------
 
 BASE_DIR = os.path.dirname(os.path.dirname(__file__))
-
-# ✔️ Updated the filename here
 MODEL_PATH = os.path.join(BASE_DIR, "models", "restaurant_grade_model.pkl")
-
 META_PATH = os.path.join(BASE_DIR, "models", "model_metadata.json")
 
+# Feature columns (must match trainer.py)
+# NOTE: We use PREVIOUS inspection data to predict NEXT grade
+FEATURE_COLUMNS = [
+    'borough',
+    'zipcode',
+    'cuisine_description',
+    'days_since_last_inspection',
+    'inspection_frequency',
+    'prev_grade_1',
+    'prev_grade_2',
+    'prev_score_1',      # Score from previous inspection
+    'prev_score_2',      # Score from inspection before that
+    'critical_violations_12mo',
+    'total_violations_all_time',
+    'avg_score_historical',
+    'score_trend',
+    'grade_stability',
+    'cuisine_avg_score',
+    'zipcode_avg_score',
+    'violation_diversity'
+]
 
-print("Loading model from:", MODEL_PATH)
-try:
-    model = joblib.load(MODEL_PATH)
-    print("Model loaded successfully!")
-except Exception as e:
-    print("MODEL LOAD ERROR:", e)
-    raise RuntimeError(f"❌ Could not load model: {e}")
+CATEGORICAL_COLUMNS = ['borough', 'cuisine_description', 'prev_grade_1', 'prev_grade_2']
 
-# try:
-#     model = joblib.load(MODEL_PATH)
-# except Exception as e:
-#     raise RuntimeError(f"❌ Could not load model: {e}")
-
-try:
-    with open(META_PATH, "r") as f:
-        metadata = json.load(f)
-except Exception as e:
-    raise RuntimeError(f"❌ Could not load metadata JSON: {e}")
-
-FEATURE_COLUMNS = metadata["feature_columns"]   # exact order used in training
-ENCODERS = metadata.get("encoders", {})
-SCALER_NEEDED = metadata.get("scaler_needed", False)
+# Default values for new restaurants with no history
+FEATURE_DEFAULTS = {
+    'days_since_last_inspection': 0,
+    'inspection_frequency': 1.0,
+    'prev_grade_1': 'Unknown',
+    'prev_grade_2': 'Unknown',
+    'prev_score_1': 13.0,   # Default to borderline A score
+    'prev_score_2': 13.0,
+    'critical_violations_12mo': 0,
+    'total_violations_all_time': 1,
+    'avg_score_historical': 13.0,
+    'score_trend': 0.0,
+    'grade_stability': 1,
+    'cuisine_avg_score': 15.0,
+    'zipcode_avg_score': 15.0,
+    'violation_diversity': 1
+}
 
 
 # -------------------------------------------------
-# Convert restaurant info into model-ready features
+# Model loading with caching support
 # -------------------------------------------------
 
-def build_feature_vector(restaurant_data: dict):
+_model_cache = {'model': None, 'metadata': None}
+
+
+def load_model(force_reload: bool = False):
     """
-    restaurant_data is a dict containing the fields your app sends, e.g.:
+    Load model and metadata from disk.
 
+    Uses module-level caching. Call with force_reload=True after training
+    to reload the updated model.
+
+    Returns:
+        tuple: (model, metadata)
+    """
+    global _model_cache
+
+    if _model_cache['model'] is not None and not force_reload:
+        return _model_cache['model'], _model_cache['metadata']
+
+    if not os.path.exists(MODEL_PATH):
+        raise FileNotFoundError(f"Model file not found: {MODEL_PATH}")
+    if not os.path.exists(META_PATH):
+        raise FileNotFoundError(f"Metadata file not found: {META_PATH}")
+
+    model = joblib.load(MODEL_PATH)
+    with open(META_PATH, 'r') as f:
+        metadata = json.load(f)
+
+    _model_cache['model'] = model
+    _model_cache['metadata'] = metadata
+
+    return model, metadata
+
+
+def clear_model_cache():
+    """Clear the cached model, forcing reload on next prediction."""
+    global _model_cache
+    _model_cache = {'model': None, 'metadata': None}
+
+
+def get_model_metadata():
+    """Get current model metadata."""
+    _, metadata = load_model()
+    return metadata
+
+
+def model_needs_retraining() -> bool:
+    """
+    Check if the model needs to be retrained.
+
+    Returns True if:
+    - metadata indicates retraining needed
+    - model feature count doesn't match expected features
+    """
+    try:
+        model, metadata = load_model()
+
+        # Check explicit flag
+        if metadata.get('requires_retraining', False):
+            return True
+
+        # Check if model was trained (has training metrics)
+        if metadata.get('training_metrics') is None:
+            return True
+
+        # Check feature count matches
+        expected_features = len(FEATURE_COLUMNS)
+        if hasattr(model, 'n_features_in_'):
+            if model.n_features_in_ != expected_features:
+                return True
+
+        return False
+    except Exception:
+        return True
+
+
+# -------------------------------------------------
+# Feature encoding
+# -------------------------------------------------
+
+def build_feature_vector(restaurant_data: dict) -> np.ndarray:
+    """
+    Transform restaurant data dict into model-ready feature array.
+
+    Expected input (all features):
     {
-        "zipcode": 11372,
         "borough": "Queens",
+        "zipcode": "11372",
         "cuisine_description": "Latin American",
-        "critical_flag_bin": 0,
-        "score": 12
+        "days_since_last_inspection": 45,
+        "inspection_frequency": 1.5,
+        "prev_grade_1": "A",
+        "prev_grade_2": "B",
+        "prev_score_1": 12,
+        "prev_score_2": 15,
+        "critical_violations_12mo": 2,
+        "total_violations_all_time": 15,
+        "avg_score_historical": 14.5,
+        "score_trend": -0.02,
+        "grade_stability": 1,
+        "cuisine_avg_score": 18.3,
+        "zipcode_avg_score": 16.2,
+        "violation_diversity": 5
     }
 
-    This function transforms it into a DataFrame with the SAME columns
-    and order that the model was trained on.
+    Missing features will be filled with defaults.
+
+    Returns:
+        numpy array with encoded features in correct order
     """
-    df_input = pd.DataFrame([restaurant_data])
+    _, metadata = load_model()
+    encoders = metadata.get('encoders', {})
 
-    if ENCODERS:
-        for col, mapping in ENCODERS.items():
-            if col in df_input:
-                val = df_input[col].iloc[0]
-                df_input[col] = mapping.get(val, mapping.get("__OTHER__", 0))
+    features = []
 
-    # Rebuild DataFrame with correct column order
-    df_final = pd.DataFrame(columns=FEATURE_COLUMNS)
     for col in FEATURE_COLUMNS:
-        df_final[col] = df_input[col] if col in df_input else 0
+        value = restaurant_data.get(col)
 
-    return df_final
+        # Use defaults for missing values
+        if value is None:
+            value = FEATURE_DEFAULTS.get(col, 0)
+
+        # Encode categorical columns
+        if col in CATEGORICAL_COLUMNS:
+            str_val = str(value).strip().title()
+            encoder = encoders.get(col, {})
+            encoded = encoder.get(str_val, 0)
+            features.append(encoded)
+
+        # Handle zipcode (numeric string)
+        elif col == 'zipcode':
+            try:
+                features.append(float(str(value).replace(',', '')))
+            except (ValueError, TypeError):
+                features.append(0.0)
+
+        # All other numeric columns
+        else:
+            try:
+                features.append(float(value))
+            except (ValueError, TypeError):
+                features.append(0.0)
+
+    return pd.DataFrame([features], columns=FEATURE_COLUMNS)
 
 
 # -------------------------------------------------
-# Prediction function
+# Prediction
 # -------------------------------------------------
 
-def predict_restaurant_grade(restaurant_data: dict):
+class ModelNeedsRetrainingError(Exception):
+    """Raised when the model needs to be retrained before predictions can be made."""
+    pass
+
+
+def predict_restaurant_grade(restaurant_data: dict) -> dict:
     """
-    Input: dict with restaurant info
-    Output: dict with prediction + probabilities
+    Predict health grade for a restaurant.
+
+    Args:
+        restaurant_data: Dict with restaurant features
+
+    Returns:
+        dict with:
+            - grade: Predicted grade (A, B, or C)
+            - probabilities: Dict of grade probabilities
+            - raw_output: Raw probability array
+
+    Raises:
+        ModelNeedsRetrainingError: If model needs to be retrained
     """
+    # Check if model is compatible
+    if model_needs_retraining():
+        raise ModelNeedsRetrainingError(
+            "The model needs to be retrained with the new features. "
+            "Please click 'Retrain Model' in the sidebar."
+        )
+
+    model, _ = load_model()
+
     X = build_feature_vector(restaurant_data)
 
     pred = model.predict(X)[0]
@@ -96,3 +256,16 @@ def predict_restaurant_grade(restaurant_data: dict):
         "probabilities": prob_dict,
         "raw_output": probs.tolist()
     }
+
+
+def predict_batch(restaurant_data_list: list) -> list:
+    """
+    Predict grades for multiple restaurants.
+
+    Args:
+        restaurant_data_list: List of restaurant data dicts
+
+    Returns:
+        List of prediction dicts
+    """
+    return [predict_restaurant_grade(data) for data in restaurant_data_list]

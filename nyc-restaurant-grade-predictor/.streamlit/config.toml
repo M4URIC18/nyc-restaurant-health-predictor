@@ -1,0 +1,6 @@
+[theme]
+primaryColor = "#E87C4F"            # Action Orange - buttons/accents
+backgroundColor = "#FFFFFF"          # Clean white - main background
+secondaryBackgroundColor = "#F8F9FA" # Light gray - sidebar/cards
+textColor = "#2C3E50"                # Dark slate - body text
+font = "sans serif"

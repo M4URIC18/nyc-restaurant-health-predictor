@@ -1,1 +1,6 @@
 /data
+.DS_Store
+.env
+__pycache__/
+nyc-restaurant-grade-predictor/models/model_metadata.json
+nyc-restaurant-grade-predictor/models/restaurant_grade_model.pkl
