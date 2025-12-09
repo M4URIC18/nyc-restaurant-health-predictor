@@ -174,7 +174,7 @@ def restaurant_popup_html(row):
 
 def prepare_map_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     """Prepare dataframe for PyDeck visualization with color column."""
-    map_df = df[['latitude', 'longitude', 'dba', 'grade',
+    map_df = df[['camis', 'latitude', 'longitude', 'dba', 'grade',
                  'cuisine_description', 'borough', 'zipcode', 'score']].copy()
 
     map_df['color'] = map_df['grade'].apply(get_grade_color_rgb)

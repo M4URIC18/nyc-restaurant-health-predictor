@@ -55,13 +55,10 @@ def render_member_card(name, college, major, linkedin_url, github_url, image_url
 
 
 # --- Page Content ---
-st.markdown("<h1 style='text-align: center; font-size: 75px;'>Creators</h1>", unsafe_allow_html=True)
-render_header_divider()
-
 # --- Team Members ---
 render_member_card(
     name="Jack Kaplan",
-    college="CUNY College",
+    college="CUNY - Brooklyn College",
     major="Computer Science",
     linkedin_url="https://www.linkedin.com/in/jackkaplan1",
     github_url="https://github.com/Jack-Kaplan",
@@ -70,7 +67,7 @@ render_member_card(
 
 render_member_card(
     name="Dominik Kasza",
-    college="Queens College",
+    college="CUNY - Queens College",
     major="Computer Science",
     linkedin_url="https://www.linkedin.com/in/dominik-kasza-",
     github_url="https://github.com/Guciosk",
@@ -78,10 +75,10 @@ render_member_card(
 )
 
 render_member_card(
-    name="Mauricio",
-    college="CUNY College",
+    name="Mauricio Embus Perez",
+    college="John Jay College",
     major="Computer Science",
-    linkedin_url="",
+    linkedin_url="https://www.linkedin.com/in/ma-us-pez08/",
     github_url="https://github.com/M4URIC18",
     image_url="https://ca.slack-edge.com/T094PKG3ASD-U096M8URFAR-dfe4d20b491f-512"
 )

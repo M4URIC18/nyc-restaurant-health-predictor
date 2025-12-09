@@ -24,11 +24,8 @@ metadata = load_metadata()
 
 # --- Top Navigation ---
 render_top_nav()
-render_header_divider()
 
 # --- Page Content ---
-st.title("CleanKitchen NYC Project Analysis")
-
 st.markdown('<div class="newspaper-body">', unsafe_allow_html=True)
 
 # -------------------------------------------------

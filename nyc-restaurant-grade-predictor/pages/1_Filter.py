@@ -96,6 +96,17 @@ if zip_choice != "All":
 if cuisine_choice:
     df_filtered = df_filtered[df_filtered["cuisine_description"].isin(cuisine_choice)]
 
+# Reset map selection when filters change
+current_filters = (borough_choice, zip_choice, tuple(cuisine_choice))
+if 'prev_filters' not in st.session_state:
+    st.session_state.prev_filters = current_filters
+elif st.session_state.prev_filters != current_filters:
+    st.session_state.prev_filters = current_filters
+    if 'selected_camis' in st.session_state:
+        del st.session_state.selected_camis
+    if 'restaurant_selector' in st.session_state:
+        del st.session_state.restaurant_selector
+
 st.sidebar.markdown(f"""
 <div class="results-counter">
     <p>{len(df_filtered):,} restaurants found</p>
@@ -191,9 +202,6 @@ if st.sidebar.button("Retrain Model"):
 st.sidebar.caption("Training takes ~30 seconds")
 
 # --- MAIN LAYOUT ---
-st.title("Restaurant Filter & Predictor")
-render_header_divider()
-
 left_col, right_col = st.columns([2, 1])
 
 with left_col:
@@ -216,6 +224,7 @@ with left_col:
 
         layer = pdk.Layer(
             "ScatterplotLayer",
+            id="restaurants",
             data=map_df,
             get_position=["longitude", "latitude"],
             get_color="color",
@@ -239,7 +248,7 @@ with left_col:
             "style": {"backgroundColor": "#FFFFFF", "color": "#2C3E50", "fontSize": "14px", "padding": "12px", "borderRadius": "6px", "boxShadow": "0 2px 8px rgba(0,0,0,0.15)"}
         }
 
-        st.pydeck_chart(
+        event = st.pydeck_chart(
             pdk.Deck(
                 layers=[layer],
                 initial_view_state=view_state,
@@ -247,7 +256,21 @@ with left_col:
                 map_style="https://basemaps.cartocdn.com/gl/positron-gl-style/style.json"
             ),
             height=500,
+            on_select="rerun",
+            selection_mode="single-object",
+            key="restaurant_map"
         )
+
+        # Handle map click selection
+        if event.selection and event.selection.get("objects", {}).get("restaurants"):
+            selected_objects = event.selection["objects"]["restaurants"]
+            if selected_objects:
+                clicked_camis = selected_objects[0].get("camis")
+                if clicked_camis and st.session_state.get('selected_camis') != clicked_camis:
+                    st.session_state.selected_camis = clicked_camis
+                    # Update the selectbox value directly (it uses CAMIS as its value)
+                    st.session_state.restaurant_selector = clicked_camis
+                    st.rerun()
 
         # Grade legend
         st.markdown("""
@@ -294,29 +317,39 @@ with right_col:
             name_col = df_filtered.columns[0]
 
         df_filtered = df_filtered.reset_index(drop=True)
-        options = df_filtered.index.tolist()
 
-        # Build labels with street name and ZIP for easy identification
-        def make_label(i):
-            name = df_filtered.loc[i, name_col]
-            street = df_filtered.loc[i, 'street'] if 'street' in df_filtered.columns else None
-            zipcode = df_filtered.loc[i, 'zipcode']
+        # Build labels dictionary keyed by CAMIS for stable identification
+        def make_label(row):
+            name = row[name_col]
+            street = row.get('street')
+            zipcode = row.get('zipcode')
+            borough = row.get('borough')
 
             if pd.notna(street) and street not in ('nan', ''):
                 return f"{name} ({street}, {zipcode})"
             else:
-                borough = df_filtered.loc[i, 'borough']
                 return f"{name} ({borough}, {zipcode})"
 
-        labels = [make_label(i) for i in options]
+        camis_list = df_filtered['camis'].tolist()
+        labels_dict = df_filtered.set_index('camis').apply(make_label, axis=1).to_dict()
 
-        selected_idx = st.selectbox(
+        # Initialize selectbox state if not set or if current value not in filtered list
+        current_selection = st.session_state.get('restaurant_selector')
+        if current_selection not in camis_list:
+            # Use selected_camis from map click if valid, otherwise first in list
+            if st.session_state.get('selected_camis') in camis_list:
+                st.session_state.restaurant_selector = st.session_state.selected_camis
+            elif camis_list:
+                st.session_state.restaurant_selector = camis_list[0]
+
+        selected_camis = st.selectbox(
             "Choose a restaurant to analyze:",
-            options=options,
-            format_func=lambda i: labels[i]
+            options=camis_list,
+            format_func=lambda c: labels_dict.get(c, str(c)),
+            key="restaurant_selector"
         )
 
-        selected_row = df_filtered.loc[selected_idx]
+        selected_row = df_filtered[df_filtered['camis'] == selected_camis].iloc[0]
 
         # Get values
         restaurant_name = selected_row.get(name_col, 'N/A')
@@ -337,194 +370,169 @@ with right_col:
         else:
             inspection_date_str = 'N/A'
 
-        # Restaurant info card
+        # Restaurant info card (compact)
         st.markdown(f"""
-        <div class="info-card">
-            <h3 style="margin: 0 0 12px 0; font-size: 1.1rem; color: #2C3E50;">{restaurant_name}</h3>
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 0.9rem;">
-                <div>
-                    <span style="color: #6C757D;">Borough</span><br/>
-                    <span style="font-weight: 500;">{borough}</span>
-                </div>
-                <div>
-                    <span style="color: #6C757D;">ZIP</span><br/>
-                    <span style="font-weight: 500;">{zipcode}</span>
-                </div>
-                <div style="grid-column: span 2;">
-                    <span style="color: #6C757D;">Cuisine</span><br/>
-                    <span style="font-weight: 500;">{cuisine}</span>
-                </div>
-            </div>
+        <div class="info-card" style="padding: 12px;">
+            <h3 style="margin: 0 0 4px 0; font-size: 1.1rem; color: #2C3E50;">{restaurant_name}</h3>
+            <div style="font-size: 0.85rem; color: #6C757D;">{borough} &bull; {zipcode} &bull; {cuisine}</div>
         </div>
         """, unsafe_allow_html=True)
 
-        # Latest inspection card
-        st.markdown(f"""
-        <div class="info-card">
-            <h4 style="margin: 0 0 12px 0; font-size: 0.95rem; color: #6C757D;">Latest Inspection</h4>
-            <div style="display: flex; align-items: center; gap: 16px;">
-                <div style="text-align: center;">
-                    <div class="grade-badge" style="background: {grade_color}; width: 48px; height: 48px; font-size: 1.3rem;">
-                        {grade}
-                    </div>
-                    <div style="font-size: 0.75rem; color: #6C757D; margin-top: 4px;">Grade</div>
-                </div>
-                <div style="flex: 1; font-size: 0.9rem;">
-                    <div style="margin-bottom: 6px;">
-                        <span style="color: #6C757D;">Score:</span>
-                        <span style="font-weight: 600; margin-left: 4px;">{score}</span>
-                    </div>
-                    <div>
-                        <span style="color: #6C757D;">Date:</span>
-                        <span style="font-weight: 500; margin-left: 4px;">{inspection_date_str}</span>
-                    </div>
-                </div>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-
-        # Inspection History (last 5 inspections)
+        # Get camis for this restaurant
         camis = selected_row.get('camis')
-        if camis:
-            raw_df = get_raw_data()
-            history = raw_df[raw_df['camis'] == camis].copy()
-            history = history.sort_values('inspection_date', ascending=False)
-            history = history.drop_duplicates(subset=['inspection_date']).head(5)
-
-            if len(history) > 0:
-                history_items = []
-                for _, insp in history.iterrows():
-                    insp_date = insp.get('inspection_date')
-                    if pd.notna(insp_date):
-                        try:
-                            date_str = pd.to_datetime(insp_date).strftime('%b %d, %Y')
-                        except:
-                            date_str = str(insp_date)
-                    else:
-                        date_str = 'N/A'
-
-                    insp_grade = display_value(insp.get('grade'), '-')
-                    insp_score = display_value(insp.get('score'), '-')
-                    insp_color = get_grade_color(insp_grade if insp_grade != '-' else 'Z')
-
-                    history_items.append(
-                        f'<div style="display: flex; align-items: center; gap: 12px; padding: 8px 0; border-bottom: 1px solid #eee;">'
-                        f'<div class="grade-badge" style="background: {insp_color}; width: 32px; height: 32px; font-size: 0.9rem;">{insp_grade}</div>'
-                        f'<div style="flex: 1; font-size: 0.85rem;">'
-                        f'<span style="font-weight: 500;">{date_str}</span>'
-                        f'<span style="color: #6C757D; margin-left: 8px;">Score: {insp_score}</span>'
-                        f'</div></div>'
-                    )
-
-                history_html = (
-                    '<div class="info-card">'
-                    '<h4 style="margin: 0 0 12px 0; font-size: 0.95rem; color: #6C757D;">Inspection History</h4>'
-                    + ''.join(history_items) +
-                    '</div>'
-                )
-                st.markdown(history_html, unsafe_allow_html=True)
 
         # Check if model needs retraining
         if model_needs_retraining():
             st.warning(
-                "**Model needs to be trained.** The prediction model has been updated with new features. "
-                "Please click **'Retrain Model'** in the sidebar to train the model before making predictions."
+                "**Model needs to be trained.** Please click **'Retrain Model'** in the sidebar."
             )
 
-        if st.button("Predict Next Inspection"):
-            with st.spinner("Analyzing restaurant data..."):
+        # Predict button at top
+        if st.button("Predict Next Inspection", use_container_width=True):
+            with st.spinner("Analyzing..."):
                 try:
-                    # Build model input
                     model_input = row_to_model_input(selected_row)
                     result = predict_restaurant_grade(model_input)
-
-                    predicted_grade = result["grade"]
-                    probabilities = result["probabilities"]
-                    formatted_probs = format_probabilities(probabilities)
-
-                    # Get current inspection info
-                    current_score = selected_row.get('score')
-                    current_grade = selected_row.get('grade')
-
-                    # Derive grade from score if official grade not available
-                    if pd.isna(current_grade) or current_grade not in ['A', 'B', 'C']:
-                        if pd.notna(current_score):
-                            if current_score <= 13:
-                                derived_grade = 'A'
-                            elif current_score <= 27:
-                                derived_grade = 'B'
-                            else:
-                                derived_grade = 'C'
-                        else:
-                            derived_grade = None
-                    else:
-                        derived_grade = current_grade
-
-                    # Calculate expected time to next inspection
+                    # Calculate time estimate
                     days_since = selected_row.get('days_since_last_inspection', 0)
                     if pd.isna(days_since):
                         days_since = 0
-
-                    median_interval = 124  # median days between inspections
-
+                    median_interval = 124
                     if days_since > 365:
-                        years_ago = round(days_since / 365, 1)
-                        time_estimate = f"Last inspected {years_ago:.0f}+ years ago"
+                        time_estimate = f"Last inspected {round(days_since / 365)}+ years ago"
                     elif days_since > median_interval:
                         time_estimate = "Overdue for inspection"
                     elif days_since > median_interval - 30:
                         time_estimate = "Due within ~1 month"
                     elif days_since > median_interval - 60:
                         time_estimate = "Expected in ~2 months"
-                    elif days_since > median_interval - 90:
-                        time_estimate = "Expected in ~3 months"
                     else:
-                        months = round((median_interval - days_since) / 30)
-                        time_estimate = f"Expected in ~{months} months"
+                        time_estimate = f"Expected in ~{round((median_interval - days_since) / 30)} months"
+                    # Store in session state
+                    st.session_state.prediction_result = {
+                        'camis': camis,
+                        'grade': result["grade"],
+                        'probabilities': result["probabilities"],
+                        'time_estimate': time_estimate
+                    }
+                except ModelNeedsRetrainingError:
+                    st.error("**Model needs retraining.** Click 'Retrain Model' in sidebar.")
+                    if 'prediction_result' in st.session_state:
+                        del st.session_state.prediction_result
+                except Exception as e:
+                    st.error(f"Prediction error: {e}")
+                    if 'prediction_result' in st.session_state:
+                        del st.session_state.prediction_result
 
-                    # Next inspection prediction card
-                    pred_color = get_grade_color(predicted_grade)
-                    st.markdown(f"""
-                    <div class="info-card" style="text-align: center; border: 2px solid {pred_color};">
-                        <p style="font-size: 0.75rem; margin-bottom: 0.5rem; color: #6C757D; text-transform: uppercase;">
-                            Predicted Next Inspection
-                        </p>
-                        <p style="font-size: 0.7rem; color: #888; margin-bottom: 8px;">
-                            {time_estimate}
-                        </p>
-                        <div class="grade-badge grade-{predicted_grade}" style="margin: 0 auto;">
-                            {predicted_grade}
+        # Fetch inspection history data
+        history_items = []
+        if camis:
+            raw_df = get_raw_data()
+            history = raw_df[raw_df['camis'] == camis].copy()
+            history = history.sort_values('inspection_date', ascending=False)
+            history = history.drop_duplicates(subset=['inspection_date']).head(5)
+
+            for _, insp in history.iterrows():
+                insp_date = insp.get('inspection_date')
+                if pd.notna(insp_date):
+                    try:
+                        date_str = pd.to_datetime(insp_date).strftime('%b %Y')
+                    except:
+                        date_str = str(insp_date)
+                else:
+                    date_str = 'N/A'
+
+                insp_grade = display_value(insp.get('grade'), '-')
+                insp_score = display_value(insp.get('score'), '-')
+                insp_color = get_grade_color(insp_grade if insp_grade != '-' else 'Z')
+
+                history_items.append(
+                    f'<div style="display: flex; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid #eee;">'
+                    f'<div class="grade-badge" style="background: {insp_color}; width: 26px; height: 26px; font-size: 0.8rem;">{insp_grade}</div>'
+                    f'<div style="flex: 1; font-size: 0.8rem;">'
+                    f'<div style="font-weight: 500;">{date_str}</div>'
+                    f'<div style="color: #6C757D;">Score: {insp_score}</div>'
+                    f'</div></div>'
+                )
+
+        # Check if we have a valid prediction for this restaurant
+        pred = st.session_state.get('prediction_result')
+        show_prediction = pred and pred.get('camis') == camis
+
+        # Side-by-side inspection cards
+        insp_left, insp_right = st.columns(2)
+
+        with insp_left:
+            st.markdown(f"""
+            <div class="info-card" style="padding: 10px;">
+                <h4 style="margin: 0 0 8px 0; font-size: 0.85rem; color: #6C757D;">Latest Inspection</h4>
+                <div style="display: flex; align-items: center; gap: 12px;">
+                    <div style="text-align: center;">
+                        <div class="grade-badge" style="background: {grade_color}; width: 42px; height: 42px; font-size: 1.2rem;">
+                            {grade}
                         </div>
                     </div>
-                    """, unsafe_allow_html=True)
-
-                    st.markdown("#### Confidence by Grade")
-                    for g, p in formatted_probs:
-                        g_color = get_grade_color(g)
-                        st.markdown(f"""
-                        <div style="margin-bottom: 8px;">
-                            <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
-                                <span>Grade {g}</span>
-                                <span style="font-weight: 500;">{p:.1f}%</span>
-                            </div>
-                            <div style="background: #E9ECEF; border-radius: 4px; height: 6px; overflow: hidden;">
-                                <div style="background: {g_color}; width: {p}%; height: 100%; border-radius: 4px;"></div>
-                            </div>
+                    <div style="flex: 1; font-size: 0.85rem;">
+                        <div style="margin-bottom: 4px;">
+                            <span style="color: #6C757D;">Score:</span>
+                            <span style="font-weight: 600; margin-left: 4px;">{score}</span>
                         </div>
-                        """, unsafe_allow_html=True)
-
-                    # Historical context
-                    if derived_grade == 'C' or (pd.notna(current_score) and current_score >= 28):
-                        st.markdown("""
-                        <div style="background: #F8F9FA; padding: 12px; border-radius: 8px; margin-top: 12px; font-size: 0.8rem; color: #6C757D;">
-                            <strong>Historical Pattern:</strong> 64% of restaurants that fail an inspection
-                            pass their re-inspection within ~4 months after addressing violations.
+                        <div>
+                            <span style="color: #6C757D;">Date:</span>
+                            <span style="font-weight: 500; margin-left: 4px;">{inspection_date_str}</span>
                         </div>
-                        """, unsafe_allow_html=True)
+                    </div>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
 
-                except ModelNeedsRetrainingError:
-                    st.error(
-                        "**Model needs retraining.** Please click 'Retrain Model' in the sidebar first."
-                    )
-                except Exception as e:
-                    st.error(f"Error making prediction: {e}")
+            # Prediction result under Latest Inspection
+            if show_prediction:
+                pred_grade = pred['grade']
+                pred_color = get_grade_color(pred_grade)
+                st.markdown(f"""
+                <div class="info-card" style="padding: 10px; border: 2px solid {pred_color}; text-align: center;">
+                    <h4 style="margin: 0 0 4px 0; font-size: 0.85rem; color: #6C757D;">Predicted Next</h4>
+                    <div style="font-size: 0.7rem; color: #888; margin-bottom: 6px;">{pred['time_estimate']}</div>
+                    <div class="grade-badge" style="background: {pred_color}; width: 42px; height: 42px; font-size: 1.2rem; margin: 0 auto;">
+                        {pred_grade}
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+
+        with insp_right:
+            if history_items:
+                history_html = (
+                    '<div class="info-card" style="padding: 10px;">'
+                    '<h4 style="margin: 0 0 8px 0; font-size: 0.85rem; color: #6C757D;">History</h4>'
+                    + ''.join(history_items) +
+                    '</div>'
+                )
+                st.markdown(history_html, unsafe_allow_html=True)
+            else:
+                st.markdown("""
+                <div class="info-card" style="padding: 10px;">
+                    <h4 style="margin: 0 0 8px 0; font-size: 0.85rem; color: #6C757D;">History</h4>
+                    <div style="color: #6C757D; font-size: 0.85rem;">No history available</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+            # Confidence bars under History (compact horizontal)
+            if show_prediction:
+                formatted_probs = format_probabilities(pred['probabilities'])
+                conf_items = ''.join([
+                    f'<div style="flex: 1; text-align: center;">'
+                    f'<div style="font-size: 0.75rem; color: #6C757D;">{g}</div>'
+                    f'<div style="background: #E9ECEF; border-radius: 4px; height: 4px; margin: 4px 0;">'
+                    f'<div style="background: {get_grade_color(g)}; width: {p}%; height: 100%; border-radius: 4px;"></div>'
+                    f'</div>'
+                    f'<div style="font-size: 0.7rem; font-weight: 500;">{p:.0f}%</div>'
+                    f'</div>'
+                    for g, p in formatted_probs
+                ])
+                st.markdown(f"""
+                <div class="info-card" style="padding: 10px;">
+                    <h4 style="margin: 0 0 8px 0; font-size: 0.85rem; color: #6C757D;">Confidence</h4>
+                    <div style="display: flex; gap: 8px;">{conf_items}</div>
+                </div>
+                """, unsafe_allow_html=True)

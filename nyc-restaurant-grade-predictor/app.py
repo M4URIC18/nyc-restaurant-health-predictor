@@ -22,13 +22,13 @@ render_top_nav()
 render_header_divider()
 
 # --- Hero Section ---
-st.markdown('<div class="hero-sub">Health Predicting/Filtering - NYC</div>', unsafe_allow_html=True)
-st.markdown('<div class="hero-title">Healthier Food<br>for NYC</div>', unsafe_allow_html=True)
+st.markdown('<div class="hero-sub">Inspect. Predict. Dine Safer.</div>', unsafe_allow_html=True)
+st.markdown('<div class="hero-title">Safer Eats<br>for NYC</div>', unsafe_allow_html=True)
 
 # Get Started button
 col1, col2 = st.columns([2, 8])
 with col1:
-    st.page_link("pages/1_Filter.py", label="Get Started →", icon="🔍")
+    st.page_link("pages/1_Filter.py", label="Get Started →")
 
 st.markdown("<br><br>", unsafe_allow_html=True)
 
@@ -68,19 +68,19 @@ st.markdown(
 )
 
 # --- Footer Navigation ---
-st.markdown("<br><br>", unsafe_allow_html=True)
-st.markdown("---")
+# st.markdown("<br><br>", unsafe_allow_html=True)
+# st.markdown("---")
 
 col1, col2, col3 = st.columns(3)
 
 with col1:
     st.markdown("### Explore")
-    st.page_link("pages/1_Filter.py", label="Filter & Predict", icon="🗺️")
+    st.page_link("pages/1_Filter.py", label="Filter & Predict")
 
 with col2:
     st.markdown("### Learn")
-    st.page_link("pages/2_About.py", label="About the Project", icon="📖")
+    st.page_link("pages/2_About.py", label="About the Project")
 
 with col3:
     st.markdown("### Connect")
-    st.page_link("pages/3_Creators.py", label="Meet the Creators", icon="👥")
+    st.page_link("pages/3_Creators.py", label="Meet the Creators")
