@@ -44,7 +44,7 @@ render_top_nav()
 render_header_divider()
 
 # --- Load Data ---
-@st.cache_data
+@st.cache_data(show_spinner="Loading NYC restaurant data...")
 def load_app_data():
     """Load feature-enriched restaurant data (one row per restaurant)."""
     df = get_data()

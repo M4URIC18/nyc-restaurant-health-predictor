@@ -15,7 +15,7 @@ from .feature_engineering import compute_all_features
 # Raw data loading (multiple rows per restaurant)
 # -------------------------------------------------
 
-@st.cache_data
+@st.cache_data(show_spinner="Fetching inspection records...")
 def load_raw_data():
     """
     Load raw inspection data with all historical records.
@@ -52,7 +52,7 @@ def load_raw_data():
 # Feature-enriched data (one row per restaurant)
 # -------------------------------------------------
 
-@st.cache_data
+@st.cache_data(show_spinner="Computing restaurant features...")
 def load_restaurant_data():
     """
     Load feature-enriched restaurant data.
