@@ -46,7 +46,7 @@ FEATURE_COLUMNS = [
 ]
 
 CATEGORICAL_COLUMNS = ['borough', 'cuisine_description', 'prev_grade_1', 'prev_grade_2']
-TARGET_COLUMN = 'target_grade'
+TARGET_COLUMN = 'target_grade'  # Output of compute_training_features()
 
 
 def prepare_training_data(df: pd.DataFrame) -> tuple:

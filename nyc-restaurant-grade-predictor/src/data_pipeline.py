@@ -6,7 +6,6 @@ This module handles:
 - Cleaning and transforming the data
 - Caching to avoid repeated API calls
 """
-
 import pandas as pd
 import numpy as np
 import os
@@ -90,19 +89,6 @@ def get_app_token(token=None):
 # =============================================================================
 
 def fetch_from_api(app_token=None):
-    """
-    Fetch all restaurant inspection data from NYC Open Data API.
-
-    Args:
-        app_token: Optional API token. If None, will attempt to find one.
-
-    Returns:
-        pd.DataFrame: Raw restaurant inspection data
-
-    Raises:
-        ValueError: If no API token is available
-        requests.RequestException: If API request fails after retries
-    """
     token = get_app_token(app_token)
     if not token:
         raise ValueError(
@@ -115,7 +101,7 @@ def fetch_from_api(app_token=None):
         )
 
     headers = {'X-App-Token': token}
-    params = {'$limit': 500000}  # Get all records
+    params = {'$limit': 500000}
 
     for attempt in range(MAX_RETRIES):
         try:

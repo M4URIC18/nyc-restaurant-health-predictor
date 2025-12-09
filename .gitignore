@@ -2,5 +2,7 @@
 .DS_Store
 .env
 __pycache__/
+.devcontainer/
 nyc-restaurant-grade-predictor/models/model_metadata.json
 nyc-restaurant-grade-predictor/models/restaurant_grade_model.pkl
+nyc-restaurant-grade-predictor/.streamlit/secrets.toml
