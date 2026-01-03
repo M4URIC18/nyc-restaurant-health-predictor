@@ -9,6 +9,7 @@ import joblib
 import numpy as np
 import pandas as pd
 import os
+import streamlit as st
 
 # -------------------------------------------------
 # Configuration
@@ -65,24 +66,16 @@ FEATURE_DEFAULTS = {
 # Model loading with caching support
 # -------------------------------------------------
 
-_model_cache = {'model': None, 'metadata': None}
-
-
-def load_model(force_reload: bool = False):
+@st.cache_resource(show_spinner="Loading prediction model...")
+def _cached_load_model():
     """
-    Load model and metadata from disk.
+    Internal function to load model with Streamlit caching.
 
-    Uses module-level caching. Call with force_reload=True after training
-    to reload the updated model.
-
-    Returns:
-        tuple: (model, metadata)
+    Uses @st.cache_resource because:
+    - sklearn model is not pickle-serializable for cache_data
+    - Model should persist across reruns and sessions
+    - Only needs to load once per server restart
     """
-    global _model_cache
-
-    if _model_cache['model'] is not None and not force_reload:
-        return _model_cache['model'], _model_cache['metadata']
-
     if not os.path.exists(MODEL_PATH):
         raise FileNotFoundError(f"Model file not found: {MODEL_PATH}")
     if not os.path.exists(META_PATH):
@@ -92,16 +85,29 @@ def load_model(force_reload: bool = False):
     with open(META_PATH, 'r') as f:
         metadata = json.load(f)
 
-    _model_cache['model'] = model
-    _model_cache['metadata'] = metadata
-
     return model, metadata
+
+
+def load_model(force_reload: bool = False):
+    """
+    Load model and metadata.
+
+    Args:
+        force_reload: If True, clear cache and reload from disk.
+                     Use after retraining the model.
+
+    Returns:
+        tuple: (model, metadata)
+    """
+    if force_reload:
+        _cached_load_model.clear()
+
+    return _cached_load_model()
 
 
 def clear_model_cache():
     """Clear the cached model, forcing reload on next prediction."""
-    global _model_cache
-    _model_cache = {'model': None, 'metadata': None}
+    _cached_load_model.clear()
 
 
 def get_model_metadata():

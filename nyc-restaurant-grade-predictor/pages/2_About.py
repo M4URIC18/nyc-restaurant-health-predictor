@@ -9,7 +9,7 @@ import os
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from src.components import load_css, render_top_nav, render_header_divider
-from src.trainer import load_metadata
+from src.preloader import preload_model_metadata
 
 # --- Page Configuration ---
 st.set_page_config(
@@ -20,7 +20,7 @@ st.set_page_config(
 load_css()
 
 # --- Load Model Metadata ---
-metadata = load_metadata()
+metadata = preload_model_metadata()
 
 # --- Top Navigation ---
 render_top_nav()

@@ -19,7 +19,8 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from src.components import load_css, render_top_nav, render_header_divider
-from src.data_loader import get_data, get_raw_data, refresh_data, load_training_data, clear_data_cache
+from src.data_loader import get_raw_data, refresh_data, load_training_data, clear_data_cache
+from src.preloader import preload_restaurant_data
 from src.predictor import predict_restaurant_grade, clear_model_cache, get_model_metadata, model_needs_retraining, ModelNeedsRetrainingError
 from src.feature_engineering import compute_training_features
 from src.trainer import train_model, save_model, get_feature_importance_ranking
@@ -44,17 +45,16 @@ render_top_nav()
 render_header_divider()
 
 # --- Load Data ---
-@st.cache_data(show_spinner="Loading NYC restaurant data...")
-def load_app_data():
-    """Load feature-enriched restaurant data (one row per restaurant)."""
-    df = get_data()
+def get_app_data():
+    """Get preloaded restaurant data with formatting applied."""
+    df = preload_restaurant_data()
     df["borough"] = df["borough"].astype(str).str.strip().str.title()
     df["cuisine_description"] = df["cuisine_description"].astype(str).str.strip().str.title()
     if "inspection_date" in df.columns:
         df["inspection_date"] = pd.to_datetime(df["inspection_date"], errors="coerce")
     return df
 
-df = load_app_data()
+df = get_app_data()
 
 if df.empty:
     st.error("No data loaded. Please check your CSV files in the data/ folder.")
@@ -201,89 +201,98 @@ if st.sidebar.button("Retrain Model"):
 
 st.sidebar.caption("Training takes ~30 seconds")
 
+
+# --- Map Fragment ---
+# Using @st.fragment so map interactions only rerun this section, not the full page
+@st.fragment
+def render_map_fragment(filtered_df):
+    """Render the interactive map as a fragment for faster interactions."""
+    if len(filtered_df) == 0:
+        st.info("No restaurants match your filters. Try changing the filters.")
+        return
+
+    # Prepare data for PyDeck
+    map_df = prepare_map_dataframe(filtered_df)
+
+    center_lat = map_df["latitude"].mean()
+    center_lon = map_df["longitude"].mean()
+
+    # Adaptive zoom based on data spread
+    lat_range = map_df["latitude"].max() - map_df["latitude"].min()
+    lon_range = map_df["longitude"].max() - map_df["longitude"].min()
+    max_range = max(lat_range, lon_range)
+    zoom = 15 if max_range < 0.01 else 13 if max_range < 0.05 else 12 if max_range < 0.1 else 11
+
+    layer = pdk.Layer(
+        "ScatterplotLayer",
+        id="restaurants",
+        data=map_df,
+        get_position=["longitude", "latitude"],
+        get_color="color",
+        get_radius=8,
+        radius_min_pixels=4,
+        radius_max_pixels=8,
+        radius_scale=1,
+        pickable=True,
+        auto_highlight=True,
+    )
+
+    view_state = pdk.ViewState(
+        latitude=center_lat,
+        longitude=center_lon,
+        zoom=zoom,
+        pitch=0,
+    )
+
+    tooltip = {
+        "html": "<b>{name}</b><br/>Cuisine: {cuisine_description}<br/>Borough: {borough}<br/>ZIP: {zipcode}<br/>Score: {score_display}<br/>Grade: <b>{grade_display}</b>",
+        "style": {"backgroundColor": "#FFFFFF", "color": "#2C3E50", "fontSize": "14px", "padding": "12px", "borderRadius": "6px", "boxShadow": "0 2px 8px rgba(0,0,0,0.15)"}
+    }
+
+    event = st.pydeck_chart(
+        pdk.Deck(
+            layers=[layer],
+            initial_view_state=view_state,
+            tooltip=tooltip,
+            map_style="https://basemaps.cartocdn.com/gl/positron-gl-style/style.json"
+        ),
+        height=500,
+        on_select="rerun",  # Now only reruns fragment, not full page
+        selection_mode="single-object",
+        key="restaurant_map"
+    )
+
+    # Handle map click selection within the fragment
+    if event.selection and event.selection.get("objects", {}).get("restaurants"):
+        selected_objects = event.selection["objects"]["restaurants"]
+        if selected_objects:
+            clicked_camis = selected_objects[0].get("camis")
+            # Only trigger full rerun if selection actually changed
+            if clicked_camis and st.session_state.get('selected_camis') != clicked_camis:
+                st.session_state.selected_camis = clicked_camis
+                st.session_state.restaurant_selector = clicked_camis
+                st.rerun()  # Full rerun needed to update right sidebar
+
+    # Grade legend
+    st.markdown("""
+    <div style="display: flex; gap: 20px; font-size: 16px; margin-top: 10px; flex-wrap: wrap;">
+        <span><span style="color: #7DB87D; font-size: 20px;">●</span> A</span>
+        <span><span style="color: #E8C84A; font-size: 20px;">●</span> B</span>
+        <span><span style="color: #8B3A3A; font-size: 20px;">●</span> C</span>
+        <span><span style="color: #9BA8C4; font-size: 20px;">●</span> Pending</span>
+        <span><span style="color: #D4956A; font-size: 20px;">●</span> N/A</span>
+    </div>
+    """, unsafe_allow_html=True)
+
+    st.caption(f"Showing all {len(map_df):,} restaurants on map.")
+
+
 # --- MAIN LAYOUT ---
 left_col, right_col = st.columns([2, 1])
 
 with left_col:
     st.subheader("Map of Restaurants")
-
-    if len(df_filtered) == 0:
-        st.info("No restaurants match your filters. Try changing the filters.")
-    else:
-        # Prepare data for PyDeck
-        map_df = prepare_map_dataframe(df_filtered)
-
-        center_lat = map_df["latitude"].mean()
-        center_lon = map_df["longitude"].mean()
-
-        # Adaptive zoom based on data spread
-        lat_range = map_df["latitude"].max() - map_df["latitude"].min()
-        lon_range = map_df["longitude"].max() - map_df["longitude"].min()
-        max_range = max(lat_range, lon_range)
-        zoom = 15 if max_range < 0.01 else 13 if max_range < 0.05 else 12 if max_range < 0.1 else 11
-
-        layer = pdk.Layer(
-            "ScatterplotLayer",
-            id="restaurants",
-            data=map_df,
-            get_position=["longitude", "latitude"],
-            get_color="color",
-            get_radius=8,
-            radius_min_pixels=4,
-            radius_max_pixels=8,
-            radius_scale=1,
-            pickable=True,
-            auto_highlight=True,
-        )
-
-        view_state = pdk.ViewState(
-            latitude=center_lat,
-            longitude=center_lon,
-            zoom=zoom,
-            pitch=0,
-        )
-
-        tooltip = {
-            "html": "<b>{name}</b><br/>Cuisine: {cuisine_description}<br/>Borough: {borough}<br/>ZIP: {zipcode}<br/>Score: {score_display}<br/>Grade: <b>{grade_display}</b>",
-            "style": {"backgroundColor": "#FFFFFF", "color": "#2C3E50", "fontSize": "14px", "padding": "12px", "borderRadius": "6px", "boxShadow": "0 2px 8px rgba(0,0,0,0.15)"}
-        }
-
-        event = st.pydeck_chart(
-            pdk.Deck(
-                layers=[layer],
-                initial_view_state=view_state,
-                tooltip=tooltip,
-                map_style="https://basemaps.cartocdn.com/gl/positron-gl-style/style.json"
-            ),
-            height=500,
-            on_select="rerun",
-            selection_mode="single-object",
-            key="restaurant_map"
-        )
-
-        # Handle map click selection
-        if event.selection and event.selection.get("objects", {}).get("restaurants"):
-            selected_objects = event.selection["objects"]["restaurants"]
-            if selected_objects:
-                clicked_camis = selected_objects[0].get("camis")
-                if clicked_camis and st.session_state.get('selected_camis') != clicked_camis:
-                    st.session_state.selected_camis = clicked_camis
-                    # Update the selectbox value directly (it uses CAMIS as its value)
-                    st.session_state.restaurant_selector = clicked_camis
-                    st.rerun()
-
-        # Grade legend
-        st.markdown("""
-        <div style="display: flex; gap: 20px; font-size: 16px; margin-top: 10px; flex-wrap: wrap;">
-            <span><span style="color: #7DB87D; font-size: 20px;">●</span> A</span>
-            <span><span style="color: #E8C84A; font-size: 20px;">●</span> B</span>
-            <span><span style="color: #8B3A3A; font-size: 20px;">●</span> C</span>
-            <span><span style="color: #9BA8C4; font-size: 20px;">●</span> Pending</span>
-            <span><span style="color: #D4956A; font-size: 20px;">●</span> N/A</span>
-        </div>
-        """, unsafe_allow_html=True)
-
-        st.caption(f"Showing all {len(map_df):,} restaurants on map.")
+    render_map_fragment(df_filtered)
 
     st.subheader("Restaurant List")
     st.caption("Filtered view based on your selections in the sidebar.")

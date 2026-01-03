@@ -7,6 +7,7 @@ This is the main entry point and landing page.
 
 import streamlit as st
 from src.components import load_css, render_top_nav, render_header_divider
+from src.preloader import preload_all
 
 # --- Page Configuration ---
 st.set_page_config(
@@ -16,6 +17,12 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 load_css()
+
+# --- Preload Application Data ---
+# Warms all caches on first visit to eliminate cold-start latency
+if '_app_preloaded' not in st.session_state:
+    preload_all(show_progress=True)
+    st.session_state._app_preloaded = True
 
 # --- Top Navigation ---
 render_top_nav()
